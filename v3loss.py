@@ -44,7 +44,8 @@ class Yolov3Loss:
         adjusted_wh = torch.exp(predicted[..., 2:4]) * self.anchor_bias_var
         # # concatenate these two
         xywh = torch.cat([adjusted_coords, adjusted_wh], -1)
-        bbox_iou = [bbox_overlap_iou(pred_box, l[:n,1:]) for pred_box,l,n in zip(xywh, labels, n_truths)]
+        # bbox_iou = [bbox_overlap_iou(pred_box, l[:n,1:]) for pred_box,l,n in zip(xywh, labels, n_truths)]
+
 
         ##############
         # Calculate the t-values
@@ -79,19 +80,31 @@ class Yolov3Loss:
         mask[idx] = 1
         ######################
 
-        n_truths_expand = torch.cat([torch.arange(n) for n in n_truths])
-        true_ious = [bbox_iou[a][b,c,d,e] for a,b,c,d,e in zip(*idx+[n_truths_expand])]
-        sigmas = predicted_obj[idx].squeeze()
-        obj_loss = ((torch.stack(true_ious) - sigmas.squeeze())**2).sum()
+        # loss for detecting a box when there is none.
+        no_obj_loss = (predicted_obj[1-mask]**2).mean()
 
-        coord_loss = ((predicted[idx][:,:4] - true_coords)**2).sum()
+        # n_truths_expand = torch.cat([torch.arange(n) for n in n_truths])
+        # true_ious = [bbox_iou[a][b,c,d,e] for a,b,c,d,e in zip(*idx+[n_truths_expand])]
+        xywh_true = torch.cat([l[:n,1:] for l,n in zip(labels, n_truths)])
+        true_ious = [bbox_overlap_iou(pred_box[None],true_box[None]) for pred_box, true_box in zip(xywh[idx],xywh_true)]
+        sigmas = predicted_obj[idx].squeeze()
+        # object detection loss per box
+        obj_loss = ((torch.stack(true_ious) - sigmas)**2).mean()
+        # coordinate loss per box, per coordinate
+        coord_loss = ((predicted[idx][:,:4] - true_coords)**2).mean()
 
         label_idx = torch.cat([lab[:n_truth,0] for n_truth,lab in zip(n_truths, labels)]).to(torch.long)
         logits = predicted[idx][:,5:]
         class_labels = torch.zeros_like(logits)
         class_labels[torch.arange(len(label_idx)),label_idx] = 1
+        # classification loss per box, per class
         classification_loss = self.BCEloss(class_labels,logits)
 
-        loss = self.scale_obj * obj_loss + self.scale_coords * coord_loss + self.scale_class * classification_loss
+        loss = self.scale_obj * obj_loss + self.scale_coords * coord_loss + self.scale_class * classification_loss \
+                + self.scale_no_obj * no_obj_loss
+        
+        # we wish to drive the t-values to zero if nothing is being predicted
+        if early_loss:
+            loss += (predicted[1-mask][:,:4]**2).mean()
             
         return loss

@@ -1,4 +1,3 @@
-# import itertools
 import torch
 import numpy as np
 from collections import defaultdict
@@ -69,16 +68,7 @@ def get_nms_boxes(output, obj_thresh, iou_thresh, meta):
     
     wh = torch.from_numpy(np.reshape([W, H], [1, 1, 1, 1, 2])).float().cuda()
     wh_ids = torch.from_numpy(np.stack(np.meshgrid(np.arange(W), np.arange(H)), 2).reshape((1,W,H,1,2))).float().cuda()
-    anchor_bias_var = torch.from_numpy(np.reshape(anchor_bias, [1, 1, 1, B, 2])).float().cuda()
-    
-    # w_list = np.array(list(range(W)), np.float32)
-    # wh_ids = torch.from_numpy(np.array(list(map(lambda x: np.array(list(itertools.product(w_list, [x]))), range(H)))).reshape(1, H, W, 1, 2)).float() 
-    
-    # if torch.cuda.is_available():
-    #     wh = wh.cuda()
-    #     wh_ids = wh_ids.cuda()
-    #     anchor_bias_var = anchor_bias_var.cuda()                           
-
+    anchor_bias_var = torch.from_numpy(np.reshape(anchor_bias, [1, 1, 1, B, 2])).float().cuda()                         
     anchor_bias_var = anchor_bias_var / wh
 
     predicted = output.permute(0, 2, 3, 1)
@@ -144,3 +134,68 @@ def get_nms_boxes(output, obj_thresh, iou_thresh, meta):
         batch_classes[n] = class_assignment
         
     return batch_boxes, batch_classes
+
+
+def calc_map(ground_truths, nms_boxes, nms_classes, n_truths, iou_thresh):
+    
+    N = ground_truths.size(0)
+    
+    mean_avg_precision = torch.FloatTensor([0]).cuda()
+
+    for batch in range(N):
+        category_map = defaultdict(lambda: defaultdict(lambda: torch.FloatTensor().cuda()))
+        
+        if n_truths[batch] == 0 or len(nms_boxes[batch]) == 0:
+            continue
+
+        # break the ground truth into groups of given classes of boxes
+        for gt in ground_truths[batch, :n_truths[batch]]:
+            gt_class = int(gt[0])
+            t1 = category_map[gt_class]['ground_truth']
+            t1 = torch.cat([t1, gt[1:].unsqueeze(0)], 0)
+            category_map[gt_class]['ground_truth'] = t1
+
+        for box, class_id in zip(nms_boxes[batch], nms_classes[batch]):
+            t2 = category_map[class_id]['prediction']
+            t2 = torch.cat([t2, box.unsqueeze(0)], 0)
+            category_map[class_id]['prediction'] = t2
+        cat_ids = category_map.keys()
+        
+        ap_per_category = [calc_map_(category_map[cat_id], iou_thresh) for cat_id in cat_ids]
+        mean_avg_precision += torch.mean(torch.cat(ap_per_category, 0))
+    return mean_avg_precision/N
+
+
+def calc_map_(boxes_dict, iou_threshold=0.5):
+#     import pdb; pdb.set_trace()
+    if len(boxes_dict['ground_truth'])==0 or len(boxes_dict['prediction'])==0:
+        return torch.zeros(1).cuda()
+
+    gt = boxes_dict['ground_truth']
+    pr = boxes_dict['prediction']
+
+    import pdb; pdb.set_trace()
+    gt_matched = -torch.ones(gt.size(0)).cuda()
+    pr_matched = -torch.ones(pr.size(0)).cuda()
+            
+    for i in range(len(pr)):
+        b = pr[i]
+        ious = bbox_overlap_iou(b[:4].view(1, 4), gt)
+        matched_scores = (gt_matched == -1).float() * (ious[0]>iou_threshold).float() * ious[0]
+        if torch.sum(matched_scores) > 0:
+            gt_idx = torch.max(matched_scores, 0)[1]
+            gt_matched[gt_idx] = i
+            pr_matched[i] = gt_idx
+        
+    tp = (pr_matched != -1).float()
+    fp = (pr_matched == -1).float()
+    tp_cumsum = torch.cumsum(tp, 0)
+    fp_cumsum = torch.cumsum(fp, 0)
+    n_corrects = tp_cumsum * tp
+    total = tp_cumsum + fp_cumsum
+    precision = n_corrects / total
+    for i in range(precision.size(0)):
+        precision[i] = torch.max(precision[i:])
+
+    average_precision = torch.sum(precision) / len(gt)
+    return average_precision.unsqueeze(0)

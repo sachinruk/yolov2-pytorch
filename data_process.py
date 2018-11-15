@@ -41,6 +41,7 @@ class RandomCrop(object):
         offs = np.array(offs*2)
         dims = np.array(dims*2)
         bboxes = deepcopy(bboxes)
+#         import pdb; pdb.set_trace()
         bboxes[:, 1:] = np.array(bboxes[:, 1:]*scale - offs, np.int64)
         bboxes[:, 1:] = np.maximum(np.minimum(bboxes[:, 1:], dims), 0)
         
@@ -159,9 +160,9 @@ class VOCDataset(Dataset):
         """
         with open(file, 'rb') as f:
             self.images, self.bboxes = pickle.load(f)
-        idx = np.random.permutation(len(self.images))
-        self.images = [self.images[i] for i in idx]
-        self.bboxes = [np.array(self.bboxes[i]) for i in idx]
+#         idx = np.random.permutation(len(self.images))
+#         self.images = [self.images[i] for i in idx]
+#         self.bboxes = [np.array(self.bboxes[i]) for i in idx]
 #         print(self.bboxes[0].dtype)
         if sample != -1:
             self.images = self.images[:sample]
@@ -190,8 +191,6 @@ class VOCDataset(Dataset):
             if n_true == 0:
                 bboxes = null_pad
             else:
-#                 from IPython.core.debugger import Tracer; Tracer()()
-#                 print([bboxes.dtype, null_pad.dtype])
                 bboxes = torch.cat([bboxes, null_pad])
 #                 bboxes = torch.cat([torch.from_numpy(bboxes).float(), 
 #                                     null_pad])
@@ -200,7 +199,7 @@ class VOCDataset(Dataset):
         datum['n_true'] = n_true
         return datum
     
-def get_data(image_size=416, sample=-1, batch_size=64, dataset='train'):
+def get_data(file, num_workers=4, shuffle=False, image_size=416, sample=-1, batch_size=64):
     transform_fn = transforms.Compose([RandomCrop(), 
                                    RandomFlip(), 
                                    Rescale((image_size, image_size)), 
@@ -209,21 +208,39 @@ def get_data(image_size=416, sample=-1, batch_size=64, dataset='train'):
                                    EliminateSmallBoxes(0.025),
                                    ToTensor()])
     
-    if dataset == 'train':
-        voc_train = VOCDataset("./data/train1000.pickle", 
-                               sample=sample, 
-                               transform=transform_fn)
+    dataset = VOCDataset(file, 
+                         sample=sample, 
+                         transform=transform_fn)
+    data_loader = DataLoader(dataset, 
+                             batch_size=batch_size, 
+                             shuffle=shuffle, 
+                             num_workers=num_workers)
+    return data_loader, len(dataset)
+    
+# def get_data(image_size=416, sample=-1, batch_size=64, dataset='train'):
+#     transform_fn = transforms.Compose([RandomCrop(), 
+#                                    RandomFlip(), 
+#                                    Rescale((image_size, image_size)), 
+#                                    TransformBoxCoords(), 
+#                                    Normalize(),
+#                                    EliminateSmallBoxes(0.025),
+#                                    ToTensor()])
+    
+#     if dataset == 'train':
+#         voc_train = VOCDataset("./data/train.pickle", 
+#                                sample=sample, 
+#                                transform=transform_fn)
 
-        train_loader = DataLoader(voc_train, 
-                                  batch_size=batch_size, 
-                                  shuffle=True, 
-                                  num_workers=0)
-        return train_loader, len(voc_train)
-    else:
-        voc_test = VOCDataset("./data/test.pickle", 
-                              sample=sample, 
-                              transform=transform_fn)
-        test_loader = DataLoader(voc_test_12, 
-                                 batch_size=batch_size, 
-                                 num_workers=4)
-        return test_loader, len(voc_test)
+#         train_loader = DataLoader(voc_train, 
+#                                   batch_size=batch_size, 
+#                                   shuffle=True, 
+#                                   num_workers=4)
+#         return train_loader, len(voc_train)
+#     else:
+#         voc_test = VOCDataset("./data/test.pickle", 
+#                               sample=sample, 
+#                               transform=transform_fn)
+#         test_loader = DataLoader(voc_test, 
+#                                  batch_size=batch_size, 
+#                                  num_workers=4)
+#         return test_loader, len(voc_test)

@@ -26,6 +26,10 @@ class Yolov3Loss:
         # functions
         self.BCEloss = nn.BCEWithLogitsLoss()
         self.sigmoid = torch.nn.Sigmoid()
+        self.early_loss = True
+        
+    def set_early_loss(self, early_loss):
+        self.early_loss = early_loss
 
     def loss(self, output, labels, n_truths, early_loss=True):
         predicted = output.permute(0, 2, 3, 1)
@@ -104,7 +108,7 @@ class Yolov3Loss:
                 + self.scale_no_obj * no_obj_loss
         
         # we wish to drive the t-values to zero if nothing is being predicted
-        if early_loss:
+        if self.early_loss:
             loss += (predicted[1-mask][:,:4]**2).mean()
             
         return loss
